@@ -73,7 +73,7 @@ def build_chart(df):
         color='Metric:N'
     )
 
-    backlog = base.mark_rule(color='red').transform_filter(
+    backlog = base.mark_rule(color='orange').transform_filter(
         alt.datum["Backlog Flag"] == True
     )
 
@@ -110,18 +110,18 @@ def replay_simulation(demand_series, delay, target_inventory, behavior, ma_windo
 # ----------------------------
 st.set_page_config(layout="wide")
 st.title("Bullwhip Simulator")
-
+st.text("For each period enter your order, considering the Demand, Inventory, Backlog and On order values. The order placed in current period will be delivered after the value of Lead time, set in setup parameter.")
 # Sidebar (global params)
-st.sidebar.header("Game Setup")
+st.sidebar.header("Simulation Setup")
 
-periods = st.sidebar.slider("Simulation Periods", 20, 100, 60)
-delay = st.sidebar.slider("Delay", 1, 6, 2)
-ma_window = st.sidebar.slider("Moving Average Window", 1, 20, 5)
+periods = st.sidebar.slider("Simulation periods", 20, 100, 60)
+delay = st.sidebar.slider("Lead time", 1, 6, 2)
+ma_window = st.sidebar.slider("Moving Average periods", 1, 20, 5)
 demand_mode = st.sidebar.selectbox("Demand Type", ["Constant", "Random", "Seasonal", "Shock"])
 target_inventory = st.sidebar.slider("Target Inventory  (System replay)", 5, 50, 20)
 behavior = st.sidebar.slider("Behavior Amplification (System replay)", 0.5, 2.0, 1.0)
 
-start_game = st.sidebar.button("Start New Game")
+start_game = st.sidebar.button("Start New Simulation")
 
 # ----------------------------
 # Session State
@@ -139,23 +139,23 @@ if start_game:
 # ----------------------------
 # Tabs
 # ----------------------------
-tab1, tab2 = st.tabs(["🎮 Game", "📊 System Replay"])
+tab1, tab2 = st.tabs(["Play simulation", "System Replay"])
 
 # ============================
 # TAB 1: GAME
 # ============================
 with tab1:
-    st.header("Play the Game")
+    st.header("Play simulation")
 
     if not st.session_state.initialized:
-        st.info("Set parameters and click 'Start New Game'")
+        st.info("Set parameters and click 'Start New Simulation'")
     else:
         t = st.session_state.t
         demand_series = st.session_state.demand_series
         stage = st.session_state.stage
 
         if t >= len(demand_series):
-            st.success("Game Finished")
+            st.success("Simulation Finished")
         else:
             demand = demand_series[t]
 
