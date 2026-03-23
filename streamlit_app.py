@@ -24,7 +24,6 @@ class Stage:
         self.inventory -= fulfilled
         self.backlog = incoming_order + self.backlog - fulfilled
 
-        # If manual order provided (game mode), use it directly
         if manual_order is not None:
             order = int(manual_order)
         else:
@@ -80,6 +79,26 @@ def build_chart(df):
     return lines + backlog
 
 # ----------------------------
+# Cost Calculation
+# ----------------------------
+def calculate_costs(df, ordering_cost, holding_cost, goods_cost):
+    num_orders = (df.get("Order", pd.Series([0]*len(df))) > 0).sum()
+    ordering_total = num_orders * ordering_cost
+
+    holding_total = df["Inventory"].sum() * holding_cost
+
+    avg_goods_cost = (df["Inventory"].sum() * goods_cost) / len(df)
+
+    final_inventory_cost = df["Inventory"].iloc[-1] * goods_cost
+
+    return {
+        "Ordering Cost": ordering_total,
+        "Holding Cost": holding_total,
+        "Avg Goods Cost/Period": avg_goods_cost,
+        "Final Inventory Cost": final_inventory_cost
+    }
+
+# ----------------------------
 # Replay Simulation
 # ----------------------------
 def replay_simulation(demand_series, delay, target_inventory, behavior, ma_window):
@@ -96,7 +115,8 @@ def replay_simulation(demand_series, delay, target_inventory, behavior, ma_windo
             "Inventory": r["inventory"],
             "On Order": r["on_order"],
             "Shipped": r["shipped"],
-            "Backlog": r["backlog"]
+            "Backlog": r["backlog"],
+            "Order": r["order"]
         })
 
     df = pd.DataFrame(data)
@@ -110,16 +130,24 @@ def replay_simulation(demand_series, delay, target_inventory, behavior, ma_windo
 # ----------------------------
 st.set_page_config(layout="wide")
 st.title("Bullwhip Simulator")
-st.text("For each period enter your order, considering the Demand, Inventory, Backlog and On order values. The order placed in current period will be delivered after the value of Lead time, set in setup parameter.")
-# Sidebar (global params)
-st.sidebar.header("Simulation Setup")
 
-periods = st.sidebar.slider("Simulation periods", 20, 100, 60)
-delay = st.sidebar.slider("Lead time", 1, 6, 2)
+st.sidebar.header("Simulation Setup")
+st.sidebar.text("For each period enter your order, considering the Demand, Inventory, Backlog and On order values. \nThe order placed in current period will be delivered after the value of Lead time, set in setup parameter. \nA Cost mode is availabel to assess the impact in cost terms.\n")
+
+periods = st.sidebar.slider("Simulation periods", 10, 100, 30)
+delay = st.sidebar.slider("Lead time", 1, 10, 2)
 ma_window = st.sidebar.slider("Moving Average periods", 1, 20, 5)
 demand_mode = st.sidebar.selectbox("Demand Type", ["Constant", "Random", "Seasonal", "Shock"])
-target_inventory = st.sidebar.slider("Target Inventory  (System replay)", 5, 50, 20)
-behavior = st.sidebar.slider("Behavior Amplification (System replay)", 0.5, 2.0, 1.0)
+target_inventory = st.sidebar.slider("Target Inventory (for System Replay)", 5, 50, 20)
+behavior = st.sidebar.slider("Behavior Amplification (for System Replay)", 0.5, 2.0, 1.0)
+
+# Cost Mode Toggle
+cost_mode = st.sidebar.toggle("Enable Cost Mode")
+
+if cost_mode:
+    ordering_cost = st.sidebar.number_input("Cost per Order", 0.0, value=10.0)
+    holding_cost = st.sidebar.number_input("Holding Cost per Unit per Period", 0.0, value=5.0)
+    goods_cost = st.sidebar.number_input("Cost of Goods per Unit", 0.0, value=50.0)
 
 start_game = st.sidebar.button("Start New Simulation")
 
@@ -142,17 +170,15 @@ if start_game:
 tab1, tab2 = st.tabs(["Play simulation", "System Replay"])
 
 # ============================
-# TAB 1: GAME
+# TAB 1
 # ============================
 with tab1:
-    st.header("Play simulation")
-
     if not st.session_state.initialized:
-        st.info("Set parameters and click 'Start New Simulation'")
+        st.info("Start simulation from sidebar")
     else:
         t = st.session_state.t
-        demand_series = st.session_state.demand_series
         stage = st.session_state.stage
+        demand_series = st.session_state.demand_series
 
         if t >= len(demand_series):
             st.success("Simulation Finished")
@@ -165,20 +191,12 @@ with tab1:
             st.write(f"Backlog: {stage.backlog}")
             st.write(f"On Order: {sum(stage.pipeline)}")
 
-            # Persist previous order value for better UX
             if "last_order" not in st.session_state:
                 st.session_state.last_order = 5
 
-            order = st.number_input(
-                "Your Order",
-                min_value=0,
-                max_value=50,
-                value=st.session_state.last_order,
-                key="order_input"
-            )
+            order = st.number_input("Your Order", 0, 50, st.session_state.last_order)
 
             if st.button("Submit Step"):
-                # Save last entered order
                 st.session_state.last_order = order
                 r = stage.step(demand, manual_order=order)
 
@@ -188,7 +206,8 @@ with tab1:
                     "Inventory": r["inventory"],
                     "On Order": r["on_order"],
                     "Shipped": r["shipped"],
-                    "Backlog": r["backlog"]
+                    "Backlog": r["backlog"],
+                    "Order": order
                 })
 
                 st.session_state.t += 1
@@ -198,17 +217,20 @@ with tab1:
             df["Moving Avg Demand"] = df["Demand"].rolling(window=ma_window, min_periods=1).mean()
             df["Backlog Flag"] = df["Backlog"] > 0
 
-            st.subheader("Game Chart")
             st.altair_chart(build_chart(df), use_container_width=True)
 
+            if cost_mode and t >= len(demand_series):
+                costs = calculate_costs(df, ordering_cost, holding_cost, goods_cost)
+                st.subheader("Cost Summary")
+                for k, v in costs.items():
+                    st.metric(k, round(v, 2))
+
 # ============================
-# TAB 2: SYSTEM REPLAY
+# TAB 2
 # ============================
 with tab2:
-    st.header("Replay with System Policy")
-
     if not st.session_state.initialized or len(st.session_state.history) == 0:
-        st.warning("Play the game first.")
+        st.warning("Play game first")
     else:
         if st.button("Run System Simulation"):
             df = replay_simulation(
@@ -221,3 +243,9 @@ with tab2:
 
             st.altair_chart(build_chart(df), use_container_width=True)
             st.dataframe(df)
+
+            if cost_mode:
+                costs = calculate_costs(df, ordering_cost, holding_cost, goods_cost)
+                st.subheader("System Cost Summary")
+                for k, v in costs.items():
+                    st.metric(k, round(v, 2))
