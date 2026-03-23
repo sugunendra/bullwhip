@@ -41,6 +41,21 @@ class Stage:
         }
 
 # ----------------------------
+# Adaptive Policy (NEW)
+# ----------------------------
+def adaptive_order(stage, demand_history, delay, alpha=0.5, safety_factor=1.0, prev_order=0):
+    avg = np.mean(demand_history)
+    std = np.std(demand_history) if len(demand_history) > 1 else 0
+
+    target = avg * (delay + 1) + safety_factor * std
+
+    raw_order = max(target - stage.inventory + stage.backlog, 0)
+
+    order = alpha * raw_order + (1 - alpha) * prev_order
+
+    return int(round(order))
+
+# ----------------------------
 # Demand Generator
 # ----------------------------
 def generate_demand(periods, mode):
@@ -82,7 +97,7 @@ def build_chart(df):
 # Cost Calculation
 # ----------------------------
 def calculate_costs(df, ordering_cost, holding_cost, goods_cost):
-    num_orders = (df.get("Order", pd.Series([0]*len(df))) > 0).sum()
+    num_orders = (df["Order"] > 0).sum()
     ordering_total = num_orders * ordering_cost
 
     holding_total = df["Inventory"].sum() * holding_cost
@@ -99,15 +114,26 @@ def calculate_costs(df, ordering_cost, holding_cost, goods_cost):
     }
 
 # ----------------------------
-# Replay Simulation
+# Replay Simulation (UPDATED)
 # ----------------------------
-def replay_simulation(demand_series, delay, target_inventory, behavior, ma_window):
+def replay_simulation(demand_series, delay, target_inventory, behavior, ma_window, mode):
     stage = Stage(delay, target_inventory, behavior)
 
     data = []
+    demand_history = []
+    prev_order = 0
 
     for t, d in enumerate(demand_series):
-        r = stage.step(d)
+
+        demand_history.append(d)
+
+        if mode == "Policy":
+            r = stage.step(d)
+
+        elif mode == "Adaptive Optimal":
+            order = adaptive_order(stage, demand_history, delay, prev_order=prev_order)
+            r = stage.step(d, manual_order=order)
+            prev_order = order
 
         data.append({
             "Period": t,
@@ -134,14 +160,21 @@ st.title("Bullwhip Simulator")
 st.sidebar.header("Simulation Setup")
 st.sidebar.text("For each period enter your order, considering the Demand, Inventory, Backlog and On order values. \nThe order placed in current period will be delivered after the value of Lead time, set in setup parameter. \nA Cost mode is availabel to assess the impact in cost terms.\n")
 
+
 periods = st.sidebar.slider("Simulation periods", 10, 100, 30)
 delay = st.sidebar.slider("Lead time", 1, 10, 2)
 ma_window = st.sidebar.slider("Moving Average periods", 1, 20, 5)
 demand_mode = st.sidebar.selectbox("Demand Type", ["Constant", "Random", "Seasonal", "Shock"])
-target_inventory = st.sidebar.slider("Target Inventory (for System Replay)", 5, 50, 20)
-behavior = st.sidebar.slider("Behavior Amplification (for System Replay)", 0.5, 2.0, 1.0)
 
-# Cost Mode Toggle
+target_inventory = st.sidebar.slider("Target Inventory (System)", 5, 50, 20)
+behavior = st.sidebar.slider("Behavior Amplification (System)", 0.5, 2.0, 1.0)
+
+policy_mode = st.sidebar.selectbox(
+    "System Mode",
+    ["Policy", "Adaptive Optimal"]
+)
+
+# Cost Mode
 cost_mode = st.sidebar.toggle("Enable Cost Mode")
 
 if cost_mode:
@@ -169,9 +202,9 @@ if start_game:
 # ----------------------------
 tab1, tab2 = st.tabs(["Play simulation", "System Replay"])
 
-# ============================
+# ----------------------------
 # TAB 1
-# ============================
+# ----------------------------
 with tab1:
     if not st.session_state.initialized:
         st.info("Start simulation from sidebar")
@@ -225,9 +258,9 @@ with tab1:
                 for k, v in costs.items():
                     st.metric(k, round(v, 2))
 
-# ============================
+# ----------------------------
 # TAB 2
-# ============================
+# ----------------------------
 with tab2:
     if not st.session_state.initialized or len(st.session_state.history) == 0:
         st.warning("Play game first")
@@ -238,7 +271,8 @@ with tab2:
                 delay,
                 target_inventory,
                 behavior,
-                ma_window
+                ma_window,
+                policy_mode
             )
 
             st.altair_chart(build_chart(df), use_container_width=True)
